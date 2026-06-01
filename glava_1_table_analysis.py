@@ -833,18 +833,6 @@ group_table.to_csv(
     encoding='utf-8-sig'
 )
 
-print("\nГотово. Анализ завершён.")
-print("Итоговый обработанный датасет сохранён:")
-print("processed_un_population_growth_data.csv")
-print("\nСозданные графики для презентации:")
-print("1. missing_heatmap_before.png")
-print("2. missing_count_before.png")
-print("3. missing_heatmap_after.png")
-print("4. missing_before_after_compare.png")
-print("5. target_before_after_missing.png")
-print("6. target_before_after_outliers.png")
-print("7. boxplot_before_after_outliers.png")
-print("8. growth_rate_before_after_noise.png")
-print("9. growth_rate_noise_scatter.png")
+
 print("10. period_before_after_noise.png")
 print("\nФинальный размер датасета:", df.shape)
