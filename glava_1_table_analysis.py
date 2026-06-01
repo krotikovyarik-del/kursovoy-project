@@ -27,11 +27,27 @@ plt.rcParams.update({
 })
 
 # ==============================================================================
-# 1.1. ЗАГРУЗКА ДАТАСЕТА
+# 1.1. ЗАГРУЗКА ДАТАСЕТА ИЗ ZIP
 # ==============================================================================
 
-zip_path = 'table.zip'
+possible_zip_names = ['table.zip', 'archive (1).zip', 'archive.zip']
+
+zip_path = None
+
+for name in possible_zip_names:
+    if os.path.exists(name):
+        zip_path = name
+        break
+
+if zip_path is None:
+    zip_files = [f for f in os.listdir('/content') if f.lower().endswith('.zip')]
+    if len(zip_files) == 0:
+        raise FileNotFoundError("В /content не найден zip-архив.")
+    zip_path = zip_files[0]
+
 extract_path = '/content/extracted_data'
+
+print("Используется архив:", zip_path)
 
 if os.path.exists(zip_path):
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
@@ -41,20 +57,56 @@ if os.path.exists(zip_path):
         os.path.join(r, f)
         for r, d, fs in os.walk(extract_path)
         for f in fs
-        if f.endswith('.csv')
+        if f.lower().endswith(('.csv', '.xlsx', '.xls'))
     ]
 
     if len(all_files) == 0:
-        raise FileNotFoundError("В архиве не найден CSV-файл.")
+        raise FileNotFoundError("В архиве не найден CSV или Excel-файл.")
 
-    print("Найденные CSV-файлы:")
+    print("\nНайденные файлы:")
     for i, file in enumerate(all_files):
         print(i, file)
 
-    # Берем первый CSV, который сейчас у тебя открылся
-    df = pd.read_csv(all_files[0])
 else:
-    raise FileNotFoundError("Архив archive (1).zip не найден в /content.")
+    raise FileNotFoundError("Архив не найден в /content.")
+
+
+def read_table(file_path, nrows=None):
+    """
+    Чтение CSV или Excel.
+    """
+    if file_path.lower().endswith('.csv'):
+        return pd.read_csv(file_path, nrows=nrows, low_memory=False)
+    else:
+        return pd.read_excel(file_path, nrows=nrows)
+
+
+# ==============================================================================
+# ВЫБОР НУЖНОГО ФАЙЛА СО СТОЛБЦОМ Annual average growth rate
+# ==============================================================================
+
+target_col = 'Annual average growth rate'
+target_file = None
+
+for file in all_files:
+    try:
+        temp_df = read_table(file, nrows=5)
+        if target_col in temp_df.columns:
+            target_file = file
+            break
+    except Exception as e:
+        print(f"Не удалось прочитать файл {file}: {e}")
+
+if target_file is None:
+    raise FileNotFoundError(
+        "Не найден файл со столбцом 'Annual average growth rate'. "
+        "Проверь, есть ли в архиве файл US_PopGR."
+    )
+
+print("\nВыбран файл для анализа:")
+print(target_file)
+
+df = read_table(target_file)
 
 print("\nПервые строки датасета:")
 display(df.head())
@@ -72,7 +124,6 @@ display(df.dtypes)
 # 1.1. ПОДГОТОВКА ОСНОВНЫХ СТОЛБЦОВ
 # ==============================================================================
 
-target_col = 'Annual average growth rate'
 year_col = 'Period'
 category_col = 'Economy Label'
 economy_col = 'Economy'
@@ -95,21 +146,57 @@ cols_to_drop = [c for c in df.columns if 'footnote' in c.lower()]
 
 if len(cols_to_drop) > 0:
     df.drop(columns=cols_to_drop, inplace=True)
-    print("\nУдалены служебные столбцы:")
+    print("\nУдалены служебные столбцы Footnote:")
     print(cols_to_drop)
 
 # ==============================================================================
 # 1.2.4. АНАЛИЗ И ОБРАБОТКА ПРОПУСКОВ
 # ==============================================================================
-df_before = df.copy()
+
+df_before_missing = df.copy()
 
 print("\nКоличество пропусков до обработки:")
-display(df.isnull().sum())
+missing_before = df_before_missing.isnull().sum()
+display(missing_before)
+
+# ------------------------------------------------------------------------------
+# ГРАФИК 1: ТЕПЛОВАЯ КАРТА ПРОПУСКОВ ДО ОБРАБОТКИ
+# ------------------------------------------------------------------------------
 
 plt.figure(figsize=(10, 4))
-sns.heatmap(df.isnull(), cbar=False, yticklabels=False, cmap='mako')
-plt.title('Тепловая карта 1: пропущенные значения в исходной таблице')
+sns.heatmap(
+    df_before_missing.isnull(),
+    cbar=False,
+    yticklabels=False,
+    cmap='mako'
+)
+plt.title('Тепловая карта пропущенных значений до обработки')
+plt.xlabel('Признаки')
+plt.ylabel('Наблюдения')
+plt.tight_layout()
+plt.savefig('missing_heatmap_before.png', dpi=300, bbox_inches='tight')
 plt.show()
+
+# ------------------------------------------------------------------------------
+# ГРАФИК 2: КОЛИЧЕСТВО ПРОПУСКОВ ДО ОБРАБОТКИ
+# ------------------------------------------------------------------------------
+
+missing_before_nonzero = missing_before[missing_before > 0]
+
+plt.figure(figsize=(10, 5))
+missing_before_nonzero.plot(kind='bar', color='tomato', edgecolor='black')
+plt.title('Количество пропущенных значений до обработки')
+plt.xlabel('Признак')
+plt.ylabel('Количество пропусков')
+plt.xticks(rotation=45, ha='right')
+plt.grid(True)
+plt.tight_layout()
+plt.savefig('missing_count_before.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+# ------------------------------------------------------------------------------
+# ОБРАБОТКА ПРОПУСКОВ
+# ------------------------------------------------------------------------------
 
 df[target_col] = df[target_col].fillna(df[target_col].median())
 df[year_col] = df[year_col].fillna(df[year_col].median())
@@ -118,13 +205,93 @@ df[category_col] = df[category_col].fillna('Unknown_Economy')
 
 # Если есть служебный столбец Missing value — удалим
 missing_cols = [c for c in df.columns if 'missing value' in c.lower()]
+
 if len(missing_cols) > 0:
     df.drop(columns=missing_cols, inplace=True)
     print("\nУдалены служебные столбцы Missing value:")
     print(missing_cols)
 
 print("\nКоличество пропусков после обработки:")
+missing_after = df.isnull().sum()
+display(missing_after)
 
+# ------------------------------------------------------------------------------
+# ГРАФИК 3: ТЕПЛОВАЯ КАРТА ПРОПУСКОВ ПОСЛЕ ОБРАБОТКИ
+# ------------------------------------------------------------------------------
+
+plt.figure(figsize=(10, 4))
+sns.heatmap(
+    df.isnull(),
+    cbar=False,
+    yticklabels=False,
+    cmap='mako'
+)
+plt.title('Тепловая карта пропущенных значений после обработки')
+plt.xlabel('Признаки')
+plt.ylabel('Наблюдения')
+plt.tight_layout()
+plt.savefig('missing_heatmap_after.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+# ------------------------------------------------------------------------------
+# ГРАФИК 4: СРАВНЕНИЕ ПРОПУСКОВ ДО И ПОСЛЕ ОБРАБОТКИ
+# ------------------------------------------------------------------------------
+
+missing_compare = pd.DataFrame({
+    'До обработки': missing_before,
+    'После обработки': missing_after.reindex(missing_before.index).fillna(0)
+})
+
+missing_compare_nonzero = missing_compare[
+    (missing_compare['До обработки'] > 0) |
+    (missing_compare['После обработки'] > 0)
+]
+
+plt.figure(figsize=(10, 5))
+missing_compare_nonzero.plot(
+    kind='bar',
+    figsize=(10, 5),
+    edgecolor='black'
+)
+plt.title('Сравнение количества пропусков до и после обработки')
+plt.xlabel('Признак')
+plt.ylabel('Количество пропусков')
+plt.xticks(rotation=45, ha='right')
+plt.grid(True)
+plt.tight_layout()
+plt.savefig('missing_before_after_compare.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+# ------------------------------------------------------------------------------
+# ГРАФИК 5: РАСПРЕДЕЛЕНИЕ ЦЕЛЕВОГО ПРИЗНАКА ДО И ПОСЛЕ ЗАПОЛНЕНИЯ ПРОПУСКОВ
+# ------------------------------------------------------------------------------
+
+plt.figure(figsize=(10, 5))
+
+plt.hist(
+    df_before_missing[target_col].dropna(),
+    bins=35,
+    alpha=0.6,
+    label='До обработки пропусков',
+    edgecolor='black'
+)
+
+plt.hist(
+    df[target_col].dropna(),
+    bins=35,
+    alpha=0.6,
+    label='После обработки пропусков',
+    edgecolor='black'
+)
+
+plt.title('Распределение темпа прироста до и после обработки пропусков')
+plt.xlabel(target_col)
+plt.ylabel('Частота')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.savefig('target_before_after_missing.png', dpi=300, bbox_inches='tight')
+plt.show()
 
 # ==============================================================================
 # ДОПОЛНИТЕЛЬНЫЕ ЧИСЛОВЫЕ ПРИЗНАКИ
@@ -157,6 +324,8 @@ print(df.shape)
 # 1.2.7. АНАЛИЗ И ОБРАБОТКА ВЫБРОСОВ
 # ==============================================================================
 
+df_before_outliers = df.copy()
+
 q_low = df[target_col].quantile(0.01)
 q_high = df[target_col].quantile(0.99)
 
@@ -177,6 +346,56 @@ df[target_col] = df[target_col].clip(lower=q_low, upper=q_high)
 df['Growth_Rate_Abs'] = df[target_col].abs()
 df['Growth_Rate_Squared'] = df[target_col] ** 2
 df['Growth_Rate_Log'] = np.log1p(df[target_col] - df[target_col].min() + 1)
+
+# ------------------------------------------------------------------------------
+# ГРАФИК 6: СРАВНЕНИЕ РАСПРЕДЕЛЕНИЯ ДО И ПОСЛЕ ОБРАБОТКИ ВЫБРОСОВ
+# ------------------------------------------------------------------------------
+
+plt.figure(figsize=(10, 5))
+
+plt.hist(
+    df_before_outliers[target_col].dropna(),
+    bins=35,
+    alpha=0.6,
+    label='До обработки выбросов',
+    edgecolor='black'
+)
+
+plt.hist(
+    df[target_col].dropna(),
+    bins=35,
+    alpha=0.6,
+    label='После обработки выбросов',
+    edgecolor='black'
+)
+
+plt.title('Сравнение распределения до и после обработки выбросов')
+plt.xlabel(target_col)
+plt.ylabel('Частота')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.savefig('target_before_after_outliers.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+# ------------------------------------------------------------------------------
+# ГРАФИК 7: BOXPLOT ДО И ПОСЛЕ ОБРАБОТКИ ВЫБРОСОВ
+# ------------------------------------------------------------------------------
+
+plt.figure(figsize=(8, 5))
+plt.boxplot(
+    [
+        df_before_outliers[target_col].dropna(),
+        df[target_col].dropna()
+    ],
+    labels=['До обработки', 'После обработки']
+)
+plt.title('Boxplot до и после обработки выбросов')
+plt.ylabel(target_col)
+plt.grid(True)
+plt.tight_layout()
+plt.savefig('boxplot_before_after_outliers.png', dpi=300, bbox_inches='tight')
+plt.show()
 
 # ==============================================================================
 # 1.2.1. ДИАГРАММЫ РАСПРЕДЕЛЕНИЯ ЧИСЛОВЫХ ПРИЗНАКОВ
@@ -213,6 +432,8 @@ for col in numeric_features:
     plt.xlabel(col)
     plt.ylabel('Частота')
     plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(f'hist_{col.replace(" ", "_")}.png', dpi=300, bbox_inches='tight')
     plt.show()
 
 # ==============================================================================
@@ -227,6 +448,7 @@ sns.boxplot(
 plt.title('Пара 1: распределение темпа роста населения')
 plt.xlabel('Annual average growth rate')
 plt.tight_layout()
+plt.savefig('pair_1_boxplot_growth_rate.png', dpi=300, bbox_inches='tight')
 plt.show()
 
 plt.figure(figsize=(10, 5))
@@ -241,6 +463,7 @@ plt.title('Пара 2: темп роста населения по период�
 plt.xlabel('Period')
 plt.ylabel('Annual average growth rate')
 plt.tight_layout()
+plt.savefig('pair_2_scatter_period_growth.png', dpi=300, bbox_inches='tight')
 plt.show()
 
 top_economies = df[category_col].value_counts().head(10).index
@@ -255,6 +478,7 @@ sns.boxplot(
 plt.title('Пара 3: темп роста населения по первым 10 экономикам')
 plt.xticks(rotation=45)
 plt.tight_layout()
+plt.savefig('pair_3_boxplot_economies.png', dpi=300, bbox_inches='tight')
 plt.show()
 
 # ==============================================================================
@@ -287,18 +511,6 @@ fig_line = px.line(
 )
 
 fig_line.show()
-print("\nРазмер до удаления дубликатов:")
-print(df.shape)
-
-duplicates_count = df.duplicated().sum()
-
-print("Количество дубликатов:")
-print(duplicates_count)
-
-df = df.drop_duplicates()
-
-print("\nРазмер после удаления дубликатов:")
-print(df.shape)
 
 # ==============================================================================
 # 1.2.5. ТЕПЛОВАЯ КАРТА КОРРЕЛЯЦИЙ
@@ -319,6 +531,7 @@ sns.heatmap(
 )
 plt.title('Тепловая карта 2: матрица корреляции числовых признаков')
 plt.tight_layout()
+plt.savefig('correlation_matrix.png', dpi=300, bbox_inches='tight')
 plt.show()
 
 # ==============================================================================
@@ -345,6 +558,8 @@ print(f"Фильтр 3: положительный рост без агрега�
 
 np.random.seed(42)
 
+df_before_noise = df.copy()
+
 df['Growth_Rate_Noisy'] = (
     df[target_col] +
     np.random.normal(0, df[target_col].std() * 0.02, len(df))
@@ -358,6 +573,94 @@ df['Period_Noisy'] = (
 print("\nДобавлен контролируемый гауссовский шум в признаки:")
 print("Growth_Rate_Noisy")
 print("Period_Noisy")
+
+# ------------------------------------------------------------------------------
+# ГРАФИК 8: СРАВНЕНИЕ ТЕМПА РОСТА ДО И ПОСЛЕ ДОБАВЛЕНИЯ ШУМА
+# ------------------------------------------------------------------------------
+
+plt.figure(figsize=(10, 5))
+
+plt.hist(
+    df_before_noise[target_col].dropna(),
+    bins=35,
+    alpha=0.6,
+    label='Исходный признак',
+    edgecolor='black'
+)
+
+plt.hist(
+    df['Growth_Rate_Noisy'].dropna(),
+    bins=35,
+    alpha=0.6,
+    label='После добавления шума',
+    edgecolor='black'
+)
+
+plt.title('Сравнение распределения темпа роста до и после добавления шума')
+plt.xlabel(target_col)
+plt.ylabel('Частота')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.savefig('growth_rate_before_after_noise.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+# ------------------------------------------------------------------------------
+# ГРАФИК 9: SCATTER ДО И ПОСЛЕ ШУМА
+# ------------------------------------------------------------------------------
+
+noise_sample = df.sample(min(3000, len(df)), random_state=42)
+
+plt.figure(figsize=(7, 7))
+plt.scatter(
+    noise_sample[target_col],
+    noise_sample['Growth_Rate_Noisy'],
+    alpha=0.3
+)
+
+min_val = min(noise_sample[target_col].min(), noise_sample['Growth_Rate_Noisy'].min())
+max_val = max(noise_sample[target_col].max(), noise_sample['Growth_Rate_Noisy'].max())
+
+plt.plot([min_val, max_val], [min_val, max_val], linestyle='--')
+
+plt.title('Сравнение исходного темпа роста и признака с шумом')
+plt.xlabel('Исходный темп роста')
+plt.ylabel('Темп роста после добавления шума')
+plt.grid(True)
+plt.tight_layout()
+plt.savefig('growth_rate_noise_scatter.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+# ------------------------------------------------------------------------------
+# ГРАФИК 10: ПЕРИОД ДО И ПОСЛЕ ДОБАВЛЕНИЯ ШУМА
+# ------------------------------------------------------------------------------
+
+plt.figure(figsize=(10, 5))
+
+plt.hist(
+    df_before_noise[year_col].dropna(),
+    bins=35,
+    alpha=0.6,
+    label='Исходный Period',
+    edgecolor='black'
+)
+
+plt.hist(
+    df['Period_Noisy'].dropna(),
+    bins=35,
+    alpha=0.6,
+    label='Period после добавления шума',
+    edgecolor='black'
+)
+
+plt.title('Сравнение Period до и после добавления шума')
+plt.xlabel('Period')
+plt.ylabel('Частота')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.savefig('period_before_after_noise.png', dpi=300, bbox_inches='tight')
+plt.show()
 
 # ==============================================================================
 # 1.2.10. ПРЕОБРАЗОВАНИЕ ЧИСЛОВЫХ ДАННЫХ В КАТЕГОРИАЛЬНЫЕ
@@ -393,6 +696,8 @@ plt.title('Распределение темпа роста после обра�
 plt.xlabel(target_col)
 plt.ylabel('Частота')
 plt.grid(True)
+plt.tight_layout()
+plt.savefig('growth_rate_after_processing.png', dpi=300, bbox_inches='tight')
 plt.show()
 
 # ==============================================================================
@@ -429,6 +734,7 @@ plt.xlabel('Economy Label')
 plt.ylabel('Количество')
 plt.xticks(rotation=75)
 plt.tight_layout()
+plt.savefig('top_20_economy_label.png', dpi=300, bbox_inches='tight')
 plt.show()
 
 plt.figure(figsize=(8, 5))
@@ -441,6 +747,7 @@ sns.countplot(
 )
 plt.title('Распределение категорий темпа роста')
 plt.tight_layout()
+plt.savefig('growth_category_distribution.png', dpi=300, bbox_inches='tight')
 plt.show()
 
 # ==============================================================================
@@ -515,8 +822,29 @@ corr_matrix.to_csv(
     encoding='utf-8-sig'
 )
 
+missing_compare.to_csv(
+    'missing_before_after_compare.csv',
+    encoding='utf-8-sig'
+)
+
+group_table.to_csv(
+    'group_by_period.csv',
+    index=False,
+    encoding='utf-8-sig'
+)
+
 print("\nГотово. Анализ завершён.")
 print("Итоговый обработанный датасет сохранён:")
 print("processed_un_population_growth_data.csv")
-print("Финальный размер датасета:", df.shape)
-
+print("\nСозданные графики для презентации:")
+print("1. missing_heatmap_before.png")
+print("2. missing_count_before.png")
+print("3. missing_heatmap_after.png")
+print("4. missing_before_after_compare.png")
+print("5. target_before_after_missing.png")
+print("6. target_before_after_outliers.png")
+print("7. boxplot_before_after_outliers.png")
+print("8. growth_rate_before_after_noise.png")
+print("9. growth_rate_noise_scatter.png")
+print("10. period_before_after_noise.png")
+print("\nФинальный размер датасета:", df.shape)
